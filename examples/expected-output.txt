@@ -1,0 +1,25 @@
+$ memgraph why m-004 --store examples/team/graph.json
+m-004 — decision — Switch the queue to Redis Streams
+  source: ADR-019 (docs/adr-019.md)
+  supersedes: m-002
+  superseded-by: —
+  supports: —
+  supported-by: —
+  contradicts: —
+  contradicted-by: —
+  depends-on: m-005
+  depended-on-by: —
+
+$ memgraph check --store examples/team/graph.json
+memgraph: 2 problem(s) found:
+  [warn ] no-source: m-007 has no source — provenance missing.
+  [error] superseded-dependency: m-006 depends on m-002, which was superseded by m-004.
+
+$ memgraph list --store examples/team/graph.json
+m-001 [fact] Peak queue depth hit 40k jobs during the sale (source: metrics dashboard 2026-10-12)
+m-002 [decision] Use Postgres LISTEN/NOTIFY for the job queue (source: ADR-014 (docs/adr-014.md)) [superseded by m-004]
+m-003 [fact] NOTIFY payloads cap at 8000 bytes (source: Postgres docs, LISTEN/NOTIFY)
+m-004 [decision] Switch the queue to Redis Streams (source: ADR-019 (docs/adr-019.md))
+m-005 [constraint] Queue must survive a broker restart without losing jobs (source: SLO doc, section 3)
+m-006 [decision] Keep the NOTIFY consumer as the fallback reader (source: standup notes 2026-10-16)
+m-007 [question] Do we need exactly-once delivery, or is at-least-once enough? (source: none)
