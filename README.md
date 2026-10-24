@@ -31,7 +31,7 @@ Three questions it answers, fast:
 | Question | Command |
 |---|---|
 | Why did we decide this? | `memgraph why m-003` — source, supporters, contradictions, supersession |
-| Is anything stale or contradictory? | `memgraph check` — unresolved contradictions, live nodes resting on superseded ones, sourceless claims |
+| Is anything stale or contradictory? | `memgraph check` — unresolved contradictions, live nodes resting on superseded ones, dependency loops, sourceless claims |
 | What do we believe? | `memgraph list` — every node, with superseded ones marked |
 
 `memgraph check` exits 1 when it finds an error, so it works as a CI
