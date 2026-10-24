@@ -230,6 +230,56 @@ export function check(store) {
     }
   }
 
+  // A dependency loop has no base to rest on: if A depends on B and B
+  // (transitively) depends on A, neither can hold. Only edges between
+  // live nodes count — a loop that passes through a superseded node
+  // is history, handled by the checks above.
+  const liveDepEdges = new Map(); // from -> Set(to)
+  for (const link of store.links) {
+    if (link.relation !== "depends-on") continue;
+    if (isSuperseded(link.from) || isSuperseded(link.to)) continue;
+    if (!liveDepEdges.has(link.from)) liveDepEdges.set(link.from, new Set());
+    liveDepEdges.get(link.from).add(link.to);
+  }
+  const canonicalCycle = (cycle) => {
+    // cycle is distinct ids [a, b, c] meaning a -> b -> c -> a.
+    // Rotate so the lexicographically smallest id leads, so the
+    // reported loop is deterministic no matter where it was found.
+    let best = cycle;
+    for (let i = 1; i < cycle.length; i++) {
+      const rotated = cycle.slice(i).concat(cycle.slice(0, i));
+      if (rotated.join(">") < best.join(">")) best = rotated;
+    }
+    return best;
+  };
+  const reportedCycles = new Set();
+  for (const start of [...liveDepEdges.keys()].sort()) {
+    const stack = [[start, [start]]];
+    while (stack.length) {
+      const [node, path] = stack.pop();
+      const nexts = liveDepEdges.get(node);
+      if (!nexts) continue;
+      for (const next of [...nexts].sort().reverse()) {
+        if (next === start) {
+          const canon = canonicalCycle(path);
+          const key = canon.join(">");
+          if (!reportedCycles.has(key)) {
+            reportedCycles.add(key);
+            findings.push({
+              severity: "error",
+              code: "dependency-cycle",
+              message:
+                `dependency cycle: ${[...canon, canon[0]].join(" -> ")} — ` +
+                `break the loop or supersede one side.`,
+            });
+          }
+        } else if (!path.includes(next)) {
+          stack.push([next, [...path, next]]);
+        }
+      }
+    }
+  }
+
   for (const node of store.nodes) {
     if (!node.source) {
       findings.push({
