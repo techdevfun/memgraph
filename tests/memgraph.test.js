@@ -124,6 +124,61 @@ test("check flags a live node depending on a superseded node", () => {
   assert.equal(result.findings[0].code, "superseded-dependency");
 });
 
+test("check flags a dependency cycle between live nodes", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  const b = addNode(store, { type: "decision", title: "B", source: "s" });
+  addLink(store, { from: a.id, to: b.id, relation: "depends-on" });
+  addLink(store, { from: b.id, to: a.id, relation: "depends-on" });
+  const result = check(store);
+  assert.equal(result.errors, 1);
+  assert.equal(result.findings[0].code, "dependency-cycle");
+  assert.match(result.findings[0].message, /m-001 -> m-002 -> m-001/);
+});
+
+test("check reports a longer loop once, and drops it once superseded", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  const b = addNode(store, { type: "decision", title: "B", source: "s" });
+  const c = addNode(store, { type: "decision", title: "C", source: "s" });
+  addLink(store, { from: a.id, to: b.id, relation: "depends-on" });
+  addLink(store, { from: b.id, to: c.id, relation: "depends-on" });
+  addLink(store, { from: c.id, to: a.id, relation: "depends-on" });
+  const cycles = check(store).findings.filter(
+    (f) => f.code === "dependency-cycle",
+  );
+  assert.equal(cycles.length, 1);
+  assert.match(cycles[0].message, /m-001 -> m-002 -> m-003 -> m-001/);
+  // Superseding one side of the loop turns it into history: the cycle
+  // finding goes away, replaced by the superseded-dependency error.
+  const d = addNode(store, { type: "decision", title: "D", source: "s" });
+  supersede(store, { oldId: a.id, newId: d.id });
+  const after = check(store);
+  assert.equal(
+    after.findings.filter((f) => f.code === "dependency-cycle").length,
+    0,
+  );
+  assert.deepEqual(
+    after.findings.filter((f) => f.severity === "error").map((f) => f.code),
+    ["superseded-dependency"],
+  );
+});
+
+test("check catches a self-dependency written into the store by hand", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  store.links.push({
+    from: a.id,
+    to: a.id,
+    relation: "depends-on",
+    reason: "",
+  });
+  const result = check(store);
+  const cycle = result.findings.find((f) => f.code === "dependency-cycle");
+  assert.ok(cycle);
+  assert.match(cycle.message, /m-001 -> m-001/);
+});
+
 test("check flags no-source and orphan decisions, clean graph passes", () => {
   const store = emptyStore();
   const lonely = addNode(store, { type: "decision", title: "Lonely", source: "" });
@@ -194,6 +249,19 @@ test("CLI end-to-end: init, add, link, supersede, why, check", () => {
   const json = runCli(dir, ["check", "--json"]);
   assert.equal(json.status, 0);
   assert.deepEqual(JSON.parse(json.stdout), { findings: [], errors: 0, warnings: 0 });
+});
+
+test("CLI: check exits 1 and names a dependency cycle", () => {
+  const dir = tmpDir();
+  runCli(dir, ["init"]);
+  runCli(dir, ["add", "--title", "A", "--source", "s"]);
+  runCli(dir, ["add", "--title", "B", "--source", "s"]);
+  runCli(dir, ["link", "m-001", "m-002", "--relation", "depends-on"]);
+  runCli(dir, ["link", "m-002", "m-001", "--relation", "depends-on"]);
+  const out = runCli(dir, ["check"]);
+  assert.equal(out.status, 1);
+  assert.match(out.stdout, /dependency-cycle/);
+  assert.match(out.stdout, /m-001 -> m-002 -> m-001/);
 });
 
 test("CLI: why on an unknown id fails; missing store is a helpful error", () => {
