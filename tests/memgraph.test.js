@@ -83,6 +83,52 @@ test("supersede sets pointers and refuses a second supersede", () => {
   );
 });
 
+test("a direct supersedes link sets the pointers and is audited", () => {
+  const store = emptyStore();
+  const oldN = addNode(store, { type: "decision", title: "Old", source: "s" });
+  const neu = addNode(store, { type: "decision", title: "New", source: "s" });
+  const live = addNode(store, { type: "decision", title: "Live", source: "s" });
+  addLink(store, { from: live.id, to: oldN.id, relation: "depends-on" });
+  addLink(store, { from: neu.id, to: oldN.id, relation: "supersedes" });
+  assert.equal(oldN.supersededBy, neu.id);
+  assert.equal(neu.supersedes, oldN.id);
+  assert.deepEqual(why(store, oldN.id).supersededBy, [neu.id]);
+  assert.deepEqual(why(store, neu.id).supersedes, [oldN.id]);
+  const result = check(store);
+  assert.equal(result.errors, 1);
+  assert.equal(result.findings[0].code, "superseded-dependency");
+});
+
+test("a hand-written supersedes link alone is still audited", () => {
+  const store = emptyStore();
+  const oldN = addNode(store, { type: "decision", title: "Old", source: "s" });
+  const neu = addNode(store, { type: "decision", title: "New", source: "s" });
+  const live = addNode(store, { type: "decision", title: "Live", source: "s" });
+  addLink(store, { from: live.id, to: oldN.id, relation: "depends-on" });
+  // Bypass addLink, as a hand-edited store file would: link present,
+  // pointers unset.
+  store.links.push({ from: neu.id, to: oldN.id, relation: "supersedes", reason: "" });
+  assert.deepEqual(why(store, oldN.id).supersededBy, [neu.id]);
+  assert.equal(check(store).errors, 1);
+  assert.equal(check(store).findings[0].code, "superseded-dependency");
+});
+
+test("a direct supersedes link refuses a second, different supersession", () => {
+  const store = emptyStore();
+  const oldN = addNode(store, { type: "decision", title: "Old", source: "s" });
+  const neu = addNode(store, { type: "decision", title: "New", source: "s" });
+  const third = addNode(store, { type: "decision", title: "Third", source: "s" });
+  addLink(store, { from: neu.id, to: oldN.id, relation: "supersedes" });
+  assert.throws(
+    () => addLink(store, { from: third.id, to: oldN.id, relation: "supersedes" }),
+    /already superseded/,
+  );
+  assert.throws(
+    () => addLink(store, { from: neu.id, to: third.id, relation: "supersedes" }),
+    /already supersedes/,
+  );
+});
+
 test("why returns the full neighbourhood", () => {
   const store = emptyStore();
   const fact = addNode(store, { type: "fact", title: "F", source: "s" });
