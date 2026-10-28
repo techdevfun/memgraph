@@ -120,7 +120,9 @@ function printList(store, type, asJson) {
     return;
   }
   for (const n of nodes) {
-    const extra = n.supersededBy ? ` [superseded by ${n.supersededBy}]` : "";
+    const by = n.supersededBy ||
+      store.links.find((l) => l.to === n.id && l.relation === "supersedes")?.from;
+    const extra = by ? ` [superseded by ${by}]` : "";
     console.log(`${n.id} [${n.type}] ${n.title} (source: ${n.source || "none"})${extra}`);
   }
 }
@@ -225,8 +227,12 @@ function main() {
           console.log(`${node.id} — ${node.type} — ${node.title}`);
           console.log(`  source: ${node.source || "(none)"}`);
           console.log(`  created: ${node.created}`);
-          console.log(`  supersedes: ${node.supersedes || "—"}`);
-          console.log(`  superseded-by: ${node.supersededBy || "—"}`);
+          const supersedes = node.supersedes ||
+            store.links.find((l) => l.from === node.id && l.relation === "supersedes")?.to;
+          const supersededBy = node.supersededBy ||
+            store.links.find((l) => l.to === node.id && l.relation === "supersedes")?.from;
+          console.log(`  supersedes: ${supersedes || "—"}`);
+          console.log(`  superseded-by: ${supersededBy || "—"}`);
         }
         break;
       }
