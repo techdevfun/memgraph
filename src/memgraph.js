@@ -130,8 +130,34 @@ export function addLink(store, { from, to, relation, reason = "" }) {
   if (store.links.some((l) => l.from === from && l.to === to && l.relation === relation)) {
     throw new MemgraphError(`link ${from} --${relation}--> ${to} already exists`);
   }
+  if (relation === "supersedes") {
+    // A supersedes link must mean the same thing as the supersede
+    // command: the target stops being live truth. Before this fix a
+    // direct `link --relation supersedes` left both nodes' pointers
+    // unset, so `why`, `check` and `list` kept treating the old node
+    // as live. Sync the pointers here, and refuse a second, different
+    // supersession instead of silently overwriting the first one.
+    const fromNode = getNode(store, from);
+    const toNode = getNode(store, to);
+    const priorBy = [toNode.supersededBy,
+      ...store.links.filter((l) => l.to === to && l.relation === "supersedes").map((l) => l.from),
+    ].filter(Boolean);
+    if (priorBy.length && !priorBy.every((id) => id === from)) {
+      throw new MemgraphError(`${to} was already superseded by ${priorBy[0]}`);
+    }
+    const priorTargets = [fromNode.supersedes,
+      ...store.links.filter((l) => l.from === from && l.relation === "supersedes").map((l) => l.to),
+    ].filter(Boolean);
+    if (priorTargets.length && !priorTargets.every((id) => id === to)) {
+      throw new MemgraphError(`${from} already supersedes ${priorTargets[0]}`);
+    }
+  }
   const link = { from, to, relation, reason: (reason || "").trim() };
   store.links.push(link);
+  if (relation === "supersedes") {
+    getNode(store, to).supersededBy = from;
+    getNode(store, from).supersedes = to;
+  }
   return link;
 }
 
@@ -171,6 +197,13 @@ function incoming(store, id, relation) {
 
 // Full neighbourhood of one node: what it says, what says things
 // about it, and whether it is still live or superseded.
+// Supersession is read from the pointers AND from supersedes links,
+// so a store written by hand (link present, pointers unset) is audited
+// the same way as one built with the supersede command.
+function dedupe(ids) {
+  return [...new Set(ids.filter(Boolean))];
+}
+
 export function why(store, id) {
   const node = getNode(store, id);
   if (!node) throw new MemgraphError(`unknown node ${id}`);
@@ -182,8 +215,8 @@ export function why(store, id) {
     contradictedBy: incoming(store, id, "contradicts"),
     dependsOn: outgoing(store, id, "depends-on"),
     dependedOnBy: incoming(store, id, "depends-on"),
-    supersedes: node.supersedes ? [node.supersedes] : [],
-    supersededBy: node.supersededBy ? [node.supersededBy] : [],
+    supersedes: dedupe([node.supersedes, ...outgoing(store, id, "supersedes")]),
+    supersededBy: dedupe([node.supersededBy, ...incoming(store, id, "supersedes")]),
   };
 }
 
@@ -191,10 +224,12 @@ export function why(store, id) {
 // Findings are sorted by code then message so output is deterministic.
 export function check(store) {
   const findings = [];
-  const isSuperseded = (id) => {
+  const supersededBy = (id) => {
     const n = getNode(store, id);
-    return Boolean(n && n.supersededBy);
+    if (!n) return null;
+    return n.supersededBy || incoming(store, id, "supersedes")[0] || null;
   };
+  const isSuperseded = (id) => Boolean(supersededBy(id));
 
   // Contradictions only matter while both sides are still live. Once
   // one side is superseded, the contradiction is resolved history.
@@ -220,7 +255,7 @@ export function check(store) {
   for (const link of store.links) {
     if (link.relation !== "depends-on") continue;
     if (isSuperseded(link.to) && !isSuperseded(link.from)) {
-      const by = getNode(store, link.to).supersededBy;
+      const by = supersededBy(link.to);
       findings.push({
         severity: "error",
         code: "superseded-dependency",
@@ -291,7 +326,7 @@ export function check(store) {
   }
 
   for (const node of store.nodes) {
-    if (node.type !== "decision" || node.supersededBy) continue;
+    if (node.type !== "decision" || isSuperseded(node.id)) continue;
     const hasLinks = store.links.some((l) => l.from === node.id || l.to === node.id);
     if (!hasLinks) {
       findings.push({
