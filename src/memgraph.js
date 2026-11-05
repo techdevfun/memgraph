@@ -231,11 +231,35 @@ export function check(store) {
   };
   const isSuperseded = (id) => Boolean(supersededBy(id));
 
+  // A link must point at nodes that exist. The store is plain JSON,
+  // meant to be hand-edited and committed, so a typo'd id is easy —
+  // and a dangling link used to pass the gate silently: a depends-on
+  // to a ghost node was never flagged, a contradicts to one produced
+  // a finding about a node that isn't there, and `why` listed ghost
+  // ids. Flag each bad endpoint as an error. The semantic checks
+  // below skip dangling links, so the graph gets exactly one finding
+  // per bad endpoint instead of misleading follow-ons.
+  const resolves = (link) => getNode(store, link.from) && getNode(store, link.to);
+  for (const link of store.links) {
+    for (const side of ["from", "to"]) {
+      if (!getNode(store, link[side])) {
+        findings.push({
+          severity: "error",
+          code: "dangling-link",
+          message:
+            `${link.from} --${link.relation}--> ${link.to} references unknown node ${link[side]} — ` +
+            `fix the id or remove the link.`,
+        });
+      }
+    }
+  }
+
   // Contradictions only matter while both sides are still live. Once
   // one side is superseded, the contradiction is resolved history.
   const seenPairs = new Set();
   for (const link of store.links) {
     if (link.relation !== "contradicts") continue;
+    if (!resolves(link)) continue;
     const key = [link.from, link.to].sort().join("|");
     if (seenPairs.has(key)) continue;
     seenPairs.add(key);
@@ -254,6 +278,7 @@ export function check(store) {
   // depending on another superseded node is history, not a bug.
   for (const link of store.links) {
     if (link.relation !== "depends-on") continue;
+    if (!resolves(link)) continue;
     if (isSuperseded(link.to) && !isSuperseded(link.from)) {
       const by = supersededBy(link.to);
       findings.push({
@@ -272,6 +297,7 @@ export function check(store) {
   const liveDepEdges = new Map(); // from -> Set(to)
   for (const link of store.links) {
     if (link.relation !== "depends-on") continue;
+    if (!resolves(link)) continue;
     if (isSuperseded(link.from) || isSuperseded(link.to)) continue;
     if (!liveDepEdges.has(link.from)) liveDepEdges.set(link.from, new Set());
     liveDepEdges.get(link.from).add(link.to);
