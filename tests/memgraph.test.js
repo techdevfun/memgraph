@@ -225,6 +225,41 @@ test("check catches a self-dependency written into the store by hand", () => {
   assert.match(cycle.message, /m-001 -> m-001/);
 });
 
+test("check flags links to nodes that do not exist", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  const b = addNode(store, { type: "decision", title: "B", source: "s" });
+  const c = addNode(store, { type: "decision", title: "C", source: "s" });
+  addLink(store, { from: a.id, to: b.id, relation: "depends-on" });
+  addLink(store, { from: b.id, to: c.id, relation: "supports" });
+  // Typos a hand-edit could make: retarget each link at a ghost node.
+  // Before the fix the depends-on one passed the gate silently (0 errors).
+  store.links[0].to = "m-999";
+  store.links[1].from = "m-998";
+  const result = check(store);
+  const errors = result.findings.filter((f) => f.severity === "error");
+  assert.deepEqual(
+    errors.map((f) => f.code),
+    ["dangling-link", "dangling-link"],
+  );
+  const messages = errors.map((f) => f.message).join(" ");
+  assert.match(messages, /m-999/);
+  assert.match(messages, /m-998/);
+});
+
+test("a dangling contradicts link reports the bad id, not a contradiction", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  const b = addNode(store, { type: "decision", title: "B", source: "s" });
+  addLink(store, { from: a.id, to: b.id, relation: "contradicts" });
+  store.links[0].to = "m-999";
+  const result = check(store);
+  assert.deepEqual(
+    result.findings.filter((f) => f.severity === "error").map((f) => f.code),
+    ["dangling-link"],
+  );
+});
+
 test("check flags no-source and orphan decisions, clean graph passes", () => {
   const store = emptyStore();
   const lonely = addNode(store, { type: "decision", title: "Lonely", source: "" });
