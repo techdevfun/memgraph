@@ -247,6 +247,26 @@ test("check flags links to nodes that do not exist", () => {
   assert.match(messages, /m-998/);
 });
 
+test("why never names a node that does not exist", () => {
+  const store = emptyStore();
+  const a = addNode(store, { type: "decision", title: "A", source: "s" });
+  const b = addNode(store, { type: "decision", title: "B", source: "s" });
+  const c = addNode(store, { type: "decision", title: "C", source: "s" });
+  // Hand-edited store: links pointing at ghost ids, plus a supersededBy
+  // pointer naming a ghost. Before the fix, why reported m-999 as a
+  // dependency, m-998 as a supporter, and m-998/m-997 as superseders.
+  store.links.push({ from: a.id, to: "m-999", relation: "depends-on", reason: "" });
+  store.links.push({ from: "m-998", to: b.id, relation: "supports", reason: "" });
+  store.links.push({ from: "m-998", to: c.id, relation: "supersedes", reason: "" });
+  c.supersededBy = "m-997";
+  assert.deepEqual(why(store, a.id).dependsOn, []);
+  assert.deepEqual(why(store, b.id).supportedBy, []);
+  assert.deepEqual(why(store, c.id).supersededBy, []);
+  // check still reports each bad endpoint, so nothing is hidden.
+  const dangling = check(store).findings.filter((f) => f.code === "dangling-link");
+  assert.equal(dangling.length, 3);
+});
+
 test("a dangling contradicts link reports the bad id, not a contradiction", () => {
   const store = emptyStore();
   const a = addNode(store, { type: "decision", title: "A", source: "s" });
@@ -356,4 +376,27 @@ test("CLI: why on an unknown id fails; missing store is a helpful error", () => 
   assert.match(unknown.stderr, /unknown node/);
   const badCmd = runCli(dir, ["frobnicate"]);
   assert.equal(badCmd.status, 2);
+});
+
+test("CLI: show and list do not name a ghost superseder", () => {
+  const dir = tmpDir();
+  runCli(dir, ["init"]);
+  runCli(dir, ["add", "--title", "A", "--source", "s"]);
+  const file = path.join(dir, "memgraph.json");
+  const store = JSON.parse(fs.readFileSync(file, "utf8"));
+  store.links.push({ from: "m-998", to: "m-001", relation: "supersedes", reason: "" });
+  fs.writeFileSync(file, JSON.stringify(store, null, 2));
+  const show = runCli(dir, ["show", "m-001"]);
+  assert.equal(show.status, 0);
+  assert.match(show.stdout, /superseded-by: —/);
+  assert.doesNotMatch(show.stdout, /m-998/);
+  const list = runCli(dir, ["list"]);
+  assert.equal(list.status, 0);
+  assert.doesNotMatch(list.stdout, /m-998/);
+  assert.doesNotMatch(list.stdout, /superseded by/);
+  // check still flags the dangling link, so the ghost is reported, not hidden.
+  const checked = runCli(dir, ["check"]);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stdout, /dangling-link/);
+  assert.match(checked.stdout, /m-998/);
 });
