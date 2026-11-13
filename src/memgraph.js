@@ -184,14 +184,18 @@ export function supersede(store, { oldId, newId, reason = "" }) {
 }
 
 function outgoing(store, id, relation) {
+  // Neighbourhood answers must only name nodes that exist. A store is
+  // plain JSON and hand-editable, so a link can point at a ghost id;
+  // `check` reports that as a dangling-link error, and `why` must not
+  // present the ghost as a real neighbour.
   return store.links
-    .filter((l) => l.from === id && l.relation === relation)
+    .filter((l) => l.from === id && l.relation === relation && getNode(store, l.to))
     .map((l) => l.to);
 }
 
 function incoming(store, id, relation) {
   return store.links
-    .filter((l) => l.to === id && l.relation === relation)
+    .filter((l) => l.to === id && l.relation === relation && getNode(store, l.from))
     .map((l) => l.from);
 }
 
@@ -207,6 +211,9 @@ function dedupe(ids) {
 export function why(store, id) {
   const node = getNode(store, id);
   if (!node) throw new MemgraphError(`unknown node ${id}`);
+  // Supersession pointers can also be hand-edited to name a ghost, so
+  // filter them the same way as the links.
+  const live = (ids) => dedupe(ids.filter((x) => x && getNode(store, x)));
   return {
     node,
     supports: outgoing(store, id, "supports"),
@@ -215,8 +222,8 @@ export function why(store, id) {
     contradictedBy: incoming(store, id, "contradicts"),
     dependsOn: outgoing(store, id, "depends-on"),
     dependedOnBy: incoming(store, id, "depends-on"),
-    supersedes: dedupe([node.supersedes, ...outgoing(store, id, "supersedes")]),
-    supersededBy: dedupe([node.supersededBy, ...incoming(store, id, "supersedes")]),
+    supersedes: live([node.supersedes, ...outgoing(store, id, "supersedes")]),
+    supersededBy: live([node.supersededBy, ...incoming(store, id, "supersedes")]),
   };
 }
 
