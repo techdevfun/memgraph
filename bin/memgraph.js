@@ -77,6 +77,26 @@ function dash(ids) {
   return ids.length ? ids.join(", ") : "—";
 }
 
+// Supersession for display: pointers and links can be hand-edited to
+// name a node that does not exist, so only report a supersession whose
+// other side is a real node. A dangling link is `check`'s job to report;
+// `show` and `list` must not present the ghost as a real superseder.
+function supersessionOf(store, node) {
+  const supersedes =
+    (node.supersedes && getNode(store, node.supersedes) ? node.supersedes : null) ||
+    store.links.find(
+      (l) => l.from === node.id && l.relation === "supersedes" && getNode(store, l.to),
+    )?.to ||
+    null;
+  const supersededBy =
+    (node.supersededBy && getNode(store, node.supersededBy) ? node.supersededBy : null) ||
+    store.links.find(
+      (l) => l.to === node.id && l.relation === "supersedes" && getNode(store, l.from),
+    )?.from ||
+    null;
+  return { supersedes, supersededBy };
+}
+
 function printWhy(result, asJson) {
   if (asJson) {
     console.log(JSON.stringify(result, null, 2));
@@ -120,9 +140,8 @@ function printList(store, type, asJson) {
     return;
   }
   for (const n of nodes) {
-    const by = n.supersededBy ||
-      store.links.find((l) => l.to === n.id && l.relation === "supersedes")?.from;
-    const extra = by ? ` [superseded by ${by}]` : "";
+    const { supersededBy } = supersessionOf(store, n);
+    const extra = supersededBy ? ` [superseded by ${supersededBy}]` : "";
     console.log(`${n.id} [${n.type}] ${n.title} (source: ${n.source || "none"})${extra}`);
   }
 }
@@ -227,10 +246,7 @@ function main() {
           console.log(`${node.id} — ${node.type} — ${node.title}`);
           console.log(`  source: ${node.source || "(none)"}`);
           console.log(`  created: ${node.created}`);
-          const supersedes = node.supersedes ||
-            store.links.find((l) => l.from === node.id && l.relation === "supersedes")?.to;
-          const supersededBy = node.supersededBy ||
-            store.links.find((l) => l.to === node.id && l.relation === "supersedes")?.from;
+          const { supersedes, supersededBy } = supersessionOf(store, node);
           console.log(`  supersedes: ${supersedes || "—"}`);
           console.log(`  superseded-by: ${supersededBy || "—"}`);
         }
